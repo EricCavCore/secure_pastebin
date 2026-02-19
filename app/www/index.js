@@ -2,7 +2,7 @@
  *  File     : index.js
  *  Purpose  : Front end logic including UI, AJAX calls to backend, and encrypting / descrypting notes
  *             Encryption / Decryption is handled here to provide a true end-to-end encryption schema
- *  Authors  : Eric Caverly 
+ *  Authors  : Eric Caverly
  *           : Shubham Khan (enc_message, dec_message)
  */
 
@@ -54,7 +54,7 @@ function dec_message(encText, psk) {
 
         // Return decrypted text in UTF-8 format
         return decrypted.toString(CryptoJS.enc.Utf8);
-        
+
     } catch (error) {
         console.error("decryption error:", error);
         return null;
@@ -104,6 +104,9 @@ function setup_note_creation() {
         let msg = $("#new_content").val();
         let psk = $("#new_passphrase").val().trim();
         let ipr = $("#new_ip_restriction").val().trim();
+        let limit_click_b = $("#new_limit_clicks").is(":checked");
+        let max_click_i = $("#new_max_clicks").val();
+        let num_links_i = $("#new_num_links").val();
         let exp = new_expiry.val();
 
         let ciphertext = enc_message(msg, psk);
@@ -112,27 +115,37 @@ function setup_note_creation() {
         loading.show();
 
         api_req("POST", "note", {
-            "content": ciphertext, 
+            "content": ciphertext,
             "allowed_ips": ipr,
             "days_until_expire": exp,
+            "limit_clicks": limit_click_b,
+            "max_clicks": max_click_i,
+            "num_links": num_links_i,
         }, (result) => {
             loading.hide();
             result_card.show();
-            
-            if (result.success) {
-                const url = `${window.location.href}?uuid=${result.data}`;
 
-                const btn = document.createElement("button");
-                btn.setAttribute("class", "btn btn-primary");
-                btn.innerHTML = `&#x1F4CB;`;
-                btn.addEventListener("click", () => {
-                    navigator.clipboard.writeText(url);
-                    result_body.append("<i>Copied to clipboard!</i>");
+            if (result.success) {
+                result_body.empty();
+
+                result.data.forEach(id => {
+                    const url = `${window.location.href}?uuid=${id}`;
+                    const btn = document.createElement("button");
+                    btn.setAttribute("class", "btn btn-primary");
+                    btn.innerHTML = `&#x1F4CB;`;
+                    btn.addEventListener("click", () => {
+                        navigator.clipboard.writeText(url);
+                    });
+                    const id_sh = document.createElement("h6");
+                    id_sh.style = "font-size: 11px;"
+                    id_sh.appendChild(document.createTextNode(id));
+
+                    result_body.append(`&#x2713; Note available <a class="text-secondary" href="${url}">here</a> `);
+                    result_body.append(btn);
+                    result_body.append(id_sh)
+                    result_body.append(document.createElement("hr"));
                 });
 
-                result_body.empty();
-                result_body.append(`&#x2713; Note available <a class="text-secondary" href="${url}">here</a> `);
-                result_body.append(btn);
             } else {
                 create_note.show();
                 result_body.html(`&#x274c; Error: ${result.message}`);
@@ -155,16 +168,17 @@ function setup_note_retrieval(uuid) {
 
     // Obtain the note, rendering a field for the passphrase if the note eixsts, or an error
     api_req("GET", `note/${uuid}`, {}, (result) => {
+        console.log(result)
         if (result.success) {
             $("#decrypt_form").submit((e) => {
                 e.preventDefault();
                 loading.show();
-                
+
                 let psk = $("#view_passphrase").val().trim();
                 let msg = dec_message(result.data.content, psk);
 
                 result_body.empty();
-                
+
                 if (msg == "" || msg == null) {
                     result_body.html(`&#x274c; Invalid passphrase`);
                 } else {
@@ -180,7 +194,7 @@ function setup_note_retrieval(uuid) {
                 result_back.hide();
                 result_card.show();
             });
-            
+
             loading.hide();
             dec_card.show();
         } else {
@@ -205,5 +219,5 @@ $(() => {
         setup_note_creation();
     } else {
         setup_note_retrieval(uuid);
-    }  
+    }
 });

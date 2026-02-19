@@ -19,7 +19,8 @@ const (
 )
 
 var rc = redis.NewClient(&redis.Options{
-	Addr:     "db.spb.arpa:6379",
+	// Addr:     "db.spb.arpa:6379",
+	Addr:     "localhost:6379",
 	Password: "",
 	DB:       0,
 	Protocol: 2,
@@ -31,9 +32,9 @@ func main() {
 
 	r.Handle("/", http.FileServer(http.Dir("./www")))
 
-	r.HandleFunc("GET /api/note/{id}", get_note)
-	r.HandleFunc("POST /api/note", post_note)
-	r.HandleFunc("GET /api/health", health_check)
+	r.HandleFunc("GET /api/note/{id}", web_get_note)
+	r.HandleFunc("POST /api/note", web_post_note)
+	r.HandleFunc("GET /api/health", web_health_check)
 
 	addr := ":8080"
 	log.Printf("Started listening on %s\n", addr)

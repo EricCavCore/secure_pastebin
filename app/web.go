@@ -7,7 +7,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -23,6 +22,15 @@ type Resp struct {
 	Success bool   `json:"success"`
 	Data    any    `json:"data"`
 	Message string `json:"message"`
+}
+
+type PostRequest struct {
+	content           string
+	allowed_ips       string
+	days_until_expire int
+	limit_clicks      bool
+	max_clicks        int
+	num_links         int
 }
 
 func write_error(w http.ResponseWriter, msg string) {
@@ -60,95 +68,141 @@ func write_success(w http.ResponseWriter, msg string, data any) {
 	w.Write(d_buff)
 }
 
-func get_note(w http.ResponseWriter, r *http.Request) {
+func web_get_note(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	log.Printf("get_note called from %s on uuid:%s\n", r.RemoteAddr, id)
 
-	n, err := rc.HGetAll(context.Background(), id).Result()
-	if err != nil {
-		write_error(w, fmt.Sprintf("Failed to get note: %s", err.Error()))
-		return
-	}
-
 	// If using a reverse proxy, which is assumed... Otherwise use r.RemoteAddr
 	remote_addr := r.Header.Get("X-Real-Ip")
-	if remote_addr == "" {
+	if len(remote_addr) < 8 {
 		remote_addr = strings.Split(r.RemoteAddr, ":")[0]
 	}
 	log.Printf("IP from Traefik: %s\n", remote_addr)
 
-	allowed_ips, ok := n["allowed_ips"]
-	if !ok {
-		write_error(w, "Note not found")
-		return
-	}
-
-	allowed, err := within_ranges(remote_addr, allowed_ips)
+	n, err := GetNote(id)
 	if err != nil {
-		write_error(w, "Failed to check if IP was valid")
+		write_error(w, err.Error())
 		return
 	}
 
-	if !allowed {
-		write_error(w, "You are not allowed to access this note! (IP address forbidden)")
-		return
+	fmt.Printf("%#v\n", n)
+
+	// allowed, err := n.CheckAllowedIP(remote_addr)
+	// if err != nil {
+	// 	write_error(w, "Failed to verify if your IP is allowed")
+	// 	return
+	// }
+	// if !allowed {
+	// 	write_error(w, "You are not allowed to see this note (IP restricted)")
+	// 	return
+	// }
+
+	if n.LimitClicks {
+		err = n.CountClicks(id)
+		if err != nil {
+			write_error(w, err.Error())
+			return
+		}
 	}
 
 	write_success(w, "Found note", n)
 }
 
-func post_note(w http.ResponseWriter, r *http.Request) {
+func web_post_note(w http.ResponseWriter, r *http.Request) {
 	log.Printf("post_note called from %s\n", r.RemoteAddr)
 
-	r.ParseForm()
-
-	content, ok := r.Form["content"]
-	if !ok {
-		write_error(w, "Missing content in request")
+	pr, err := parse_post_form(r)
+	if err != nil {
+		write_error(w, err.Error())
 		return
 	}
 
+	id_list := []string{}
+
+	for i := 0; i < pr.num_links; i++ {
+		note := NewNote(pr.content, pr.allowed_ips, pr.limit_clicks, pr.max_clicks)
+		id := uuid.NewString()
+		err = note.SaveNote(id, time.Duration(pr.days_until_expire)*24*time.Hour)
+		if err != nil {
+			write_error(w, err.Error())
+			return
+		}
+		id_list = append(id_list, id)
+	}
+
+	write_success(w, "Note created!", id_list)
+}
+
+func parse_post_form(r *http.Request) (PostRequest, error) {
+	r.ParseForm()
+	pr := PostRequest{}
+
+	content, ok := r.Form["content"]
+	if !ok {
+		return pr, fmt.Errorf("Missing content in request")
+	}
+
 	if len(content[0]) > max_note_size_bytes {
-		write_error(w, fmt.Sprintf("Note too large! Max size: %d bytes", max_note_size_bytes))
-		return
+		return pr, fmt.Errorf("Note too large! Max size: %d bytes", max_note_size_bytes)
+	}
+
+	if len(content[0]) == 0 {
+		return pr, fmt.Errorf("Note content cannot be empty")
 	}
 
 	allowed_ips, ok := r.Form["allowed_ips"]
 	if !ok {
-		write_error(w, "Missing allowed_ips in request")
-		return
+		return pr, fmt.Errorf("Missing allowed_ips in request")
 	}
 
 	if err := check_valid_ranges(allowed_ips[0]); err != nil {
-		write_error(w, fmt.Sprintf("Invalid IP range (%s). Please enter as 1.1.1.0/24, 2.2.0.0/16", err.Error()))
-		return
+		return pr, fmt.Errorf("Invalid IP range (%s). Please enter as 1.1.1.0/24, 2.2.0.0/16", err.Error())
 	}
 
 	dte, ok := r.Form["days_until_expire"]
 	if !ok {
-		write_error(w, "Missing days_until_expire in request")
-		return
+		return pr, fmt.Errorf("Missing days_until_expire in request")
 	}
 
 	ndays, err := strconv.Atoi(dte[0])
 	if err != nil || ndays < 0 || ndays > max_days {
-		write_error(w, "Invalid number of days")
-		return
+		return pr, fmt.Errorf("Invalid number of days")
 	}
 
-	n := Note{
-		Content:        content[0],
-		AllowedIPRange: allowed_ips[0],
+	limit_clicks, ok := r.Form["limit_clicks"]
+	if !ok {
+		return pr, fmt.Errorf("Missing whether or not to limit clicks in request")
 	}
 
-	id := uuid.NewString()
+	max_clicks_s, ok := r.Form["max_clicks"]
+	if !ok && (limit_clicks[0] == "true") {
+		return pr, fmt.Errorf("Missing max clicks in request")
+	}
 
-	rc.HSet(context.Background(), id, n)
-	rc.Expire(context.Background(), id, time.Duration(ndays)*24*time.Hour)
+	max_clicks, err := strconv.Atoi(max_clicks_s[0])
+	if err != nil {
+		return pr, fmt.Errorf("Invalid max clicks value, must be int")
+	}
 
-	write_success(w, "Note created!", id)
+	num_links_s, ok := r.Form["num_links"]
+	if !ok {
+		return pr, fmt.Errorf("Missing num links in request")
+	}
+	num_links, err := strconv.Atoi(num_links_s[0])
+	if err != nil {
+		return pr, fmt.Errorf("Invalid num links, must be int")
+	}
+
+	return PostRequest{
+		content:           content[0],
+		allowed_ips:       allowed_ips[0],
+		days_until_expire: ndays,
+		limit_clicks:      limit_clicks[0] == "true",
+		max_clicks:        max_clicks,
+		num_links:         num_links,
+	}, nil
 }
 
-func health_check(w http.ResponseWriter, _ *http.Request) {
+func web_health_check(w http.ResponseWriter, _ *http.Request) {
 	write_success(w, "Alive", nil)
 }

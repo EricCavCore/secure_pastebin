@@ -33,7 +33,7 @@
             </div>
         </div>
 
-        <div id="create_card" class="card bg-warning" style="display: none;">
+        <div id="create_card" class="card bg-danger" style="display: none;">
             <div class="card-body">
                 <h5>Create New Note</h5>
                 <form id="note_form">
@@ -45,27 +45,46 @@
 
                     <br>
 
-                    <div class="form-floating mb-3">
+                    <div class="input-group mb-3">
+                        <span class="input-group-text" id="basic-addon1">Password:</span>
+                        <button class="btn btn-success" type="button" id="generate_password_btn">Generate</button>
                         <input type="password" class="form-control" id="new_passphrase" placeholder="P@ssw0rd" required>
-                        <label for="new_passphrase">Passphrase</label>
+                        <!-- <span class="input-group-text" id="basic-addon1">Do not share this password to anyone but the intended recipient</span> -->
                     </div>
 
-                    <div class="form-floating mb-3">
+                    <div class="input-group mb-3">
+                        <span class="input-group-text" id="basic-addon1">IP Restriction:</span>
                         <input type="text" class="form-control" id="new_ip_restriction" placeholder="0.0.0.0/0" value="0.0.0.0/0" required>
-                        <label for="new_ip_restriction">IP Restriction</label>
+                        <!-- <span class="input-group-text" id="basic-addon1"><i>Leave on 0.0.0.0/0 if unsure of the client's IP. Otherwise enter their public IP</i></span> -->
                     </div>
 
-                    <div class="form-floating mb-3">
+                    <div class="input-group mb-3">
+                        <span class="input-group-text" id="basic-addon1">Expiry:</span>
                         <select class="form-control" id="new_expiry">
 
                         </select>
-                        <label for="new_expiry">Expiration</label>
+                        <!-- <span class="input-group-text" id="basic-addon1">As soon as possible to ensure no one else finds the link</span> -->
+                    </div>
+
+                    <div class="input-group mb-3">
+                        <span class="input-group-text" id="basic-addon1">Limit Clicks</span>
+                        <div class="input-group-text">
+                            <input id="new_limit_clicks" class="form-check-input mt-0" type="checkbox" value="" aria-label="Limit Clicks" checked>
+                        </div>
+                        <input id="new_max_clicks" type="number" class="form-control" aria-label="Max Number of clicks" min="1" max="100" value="2">
+                        <!-- <span class="input-group-text" id="basic-addon1">1 is ideal, but tools like CHEC will click on the link</span> -->
+                    </div>
+
+                    <div class="input-group mb-3">
+                        <span class="input-group-text" id="basic-addon1">Number of Links</span>
+                        <input id="new_num_links" type="number" class="form-control" aria-label="Number of links to generate" min="1" max="500" value="1">
+                        <!-- <span class="input-group-text" id="basic-addon1">Only generate more than one link when required</span> -->
                     </div>
 
                     <div style="text-align: right;">
                         <button class="btn btn-primary" type="submit">Create Note</button>
                     </div>
-                 
+
                 </form>
             </div>
         </div>
@@ -88,18 +107,18 @@
 
                 </form>
             </div>
-        </div>  
+        </div>
 
         <div id="result_card" class="card bg-info" style="display: none;">
             <div class="card-body" id="result_body">
-                
+
             </div>
             <div class="card-body" id="result_back">
                 <a href="/"><button class="btn btn-secondary">Back</button></a>
             </div>
-        </div>  
+        </div>
     </div>
-    
+
     <footer>
         <a href="https://github.com/EricCaverly/secure_pastebin">Github</a>
     </footer>
