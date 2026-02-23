@@ -85,17 +85,15 @@ func web_get_note(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Printf("%#v\n", n)
-
-	// allowed, err := n.CheckAllowedIP(remote_addr)
-	// if err != nil {
-	// 	write_error(w, "Failed to verify if your IP is allowed")
-	// 	return
-	// }
-	// if !allowed {
-	// 	write_error(w, "You are not allowed to see this note (IP restricted)")
-	// 	return
-	// }
+	allowed, err := n.CheckAllowedIP(remote_addr)
+	if err != nil {
+		write_error(w, "Failed to verify if your IP is allowed")
+		return
+	}
+	if !allowed {
+		write_error(w, "You are not allowed to see this note (IP restricted)")
+		return
+	}
 
 	if n.LimitClicks {
 		err = n.CountClicks(id)
