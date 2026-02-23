@@ -40,8 +40,8 @@
 
                     <div class="input-group mb-3">
                         <span class="input-group-text" id="basic-addon1">Password:</span>
+                        <input type="text" class="form-control" id="new_passphrase" required>
                         <button class="btn btn-warning" type="button" id="generate_password_btn">Generate</button>
-                        <input type="text" class="form-control" id="new_passphrase" placeholder="P@ssw0rd" required>
                         <!-- <span class="input-group-text" id="basic-addon1">Do not share this password to anyone but the intended recipient</span> -->
                     </div>
 
@@ -64,13 +64,13 @@
                         <div class="input-group-text">
                             <input id="new_limit_clicks" class="form-check-input mt-0" type="checkbox" value="" aria-label="Limit Clicks" checked>
                         </div>
-                        <input id="new_max_clicks" type="number" class="form-control" aria-label="Max Number of clicks" min="1" max="100" value="2">
+                        <input id="new_max_clicks" type="number" class="form-control" aria-label="Max Number of clicks" min="1" max="100" value="1" required>
                         <!-- <span class="input-group-text" id="basic-addon1">1 is ideal, but tools like CHEC will click on the link</span> -->
                     </div>
 
                     <div class="input-group mb-3">
                         <span class="input-group-text" id="basic-addon1">Number of Links</span>
-                        <input id="new_num_links" type="number" class="form-control" aria-label="Number of links to generate" min="1" max="500" value="1">
+                        <input id="new_num_links" type="number" class="form-control" aria-label="Number of links to generate" min="1" max="500" value="1" required>
                         <!-- <span class="input-group-text" id="basic-addon1">Only generate more than one link when required</span> -->
                     </div>
 

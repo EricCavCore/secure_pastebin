@@ -132,8 +132,12 @@ func web_post_note(w http.ResponseWriter, r *http.Request) {
 }
 
 func parse_post_form(r *http.Request) (PostRequest, error) {
-	r.ParseForm()
 	pr := PostRequest{}
+
+	err := r.ParseForm()
+	if err != nil {
+		return pr, err
+	}
 
 	content, ok := r.Form["content"]
 	if !ok {
