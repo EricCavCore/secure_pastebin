@@ -98,11 +98,25 @@ function setup_note_creation() {
         new_expiry.append(opt);
     }
 
+    const passwd_field = $("#new_passphrase");
+    $("#generate_password_btn").click(() => {
+        const arr = new Uint32Array(3);
+        window.crypto.getRandomValues(arr);
+
+        let passphrase_words = [];
+        for(let i=0; i<arr.length; ++i) {
+            let index = arr[i] % word_list_length();
+            passphrase_words[i] = get_word(index);
+        }
+
+        passwd_field.val(passphrase_words.join("-"));
+    });
+
     form.submit((e) => {
         e.preventDefault();
 
         let msg = $("#new_content").val();
-        let psk = $("#new_passphrase").val().trim();
+        let psk = passwd_field.val().trim();
         let ipr = $("#new_ip_restriction").val().trim();
         let limit_click_b = $("#new_limit_clicks").is(":checked");
         let max_click_i = $("#new_max_clicks").val();
@@ -128,6 +142,10 @@ function setup_note_creation() {
             if (result.success) {
                 result_body.empty();
 
+                const password_display = document.createElement("h6");
+                password_display.appendChild(document.createTextNode(`Password: "${psk}"`));
+                result_body.append(password_display);
+
                 result.data.forEach(id => {
                     const url = `${window.location.href}?uuid=${id}`;
                     const btn = document.createElement("button");
@@ -140,7 +158,7 @@ function setup_note_creation() {
                     id_sh.style = "font-size: 11px;"
                     id_sh.appendChild(document.createTextNode(id));
 
-                    result_body.append(`&#x2713; Note available <a class="text-secondary" href="${url}">here</a> `);
+                    result_body.append(`&#x2713; Note available <a href="${url}">here</a> `);
                     result_body.append(btn);
                     result_body.append(id_sh)
                     result_body.append(document.createElement("hr"));
@@ -182,12 +200,36 @@ function setup_note_retrieval(uuid) {
                 if (msg == "" || msg == null) {
                     result_body.html(`&#x274c; Invalid passphrase`);
                 } else {
-                    result_body.html("<h5>Note Content:</h5>")
-                    const code = document.createElement("code")
-                    const pre = document.createElement("pre")
-                    pre.appendChild(document.createTextNode(msg));
-                    code.appendChild(pre);
-                    result_body.append(code);
+                    /*
+                    <div class="form-floating">
+                        <textarea class="form-control" placeholder="Leave a comment here" id="new_content" style="height: 200px;" required></textarea>
+                        <label for="new_content">Note Content</label>
+                    </div>
+                    */
+
+                    const floating_div = document.createElement("div");
+                    floating_div.classList = "form-floating";
+
+                    const text_area = document.createElement("textarea");
+                    text_area.classList = "form-control";
+                    text_area.style = "height: 300px";
+                    text_area.readOnly = true;
+                    text_area.value = msg;
+
+                    const lbl = document.createElement("label");
+                    lbl.appendChild(document.createTextNode("Note Content"))
+
+                    floating_div.appendChild(text_area);
+                    floating_div.appendChild(lbl);
+                    result_body.append(floating_div);
+
+
+                    // result_body.html("<h5>Note Content:</h5>")
+                    // const code = document.createElement("code")
+                    // const pre = document.createElement("pre")
+                    // pre.appendChild(document.createTextNode(msg));
+                    // code.appendChild(pre);
+                    // result_body.append(code);
                 }
 
                 loading.hide();
