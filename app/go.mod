@@ -1,6 +1,6 @@
 module github.com/EricCaverly/secure_pastebin
 
-go 1.25.5
+go 1.26.0
 
 require (
 	github.com/go-co-op/gocron/v2 v2.19.1
