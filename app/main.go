@@ -22,7 +22,9 @@ const (
 	max_max_clicks      = 100
 )
 
-var rc *redis.Client
+var (
+	rc *redis.Client
+)
 
 func main() {
 	redis_pass := os.Getenv("REDIS_PASSWORD")

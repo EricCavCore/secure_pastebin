@@ -92,7 +92,7 @@ func web_get_note(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !allowed {
-		write_error(w, "You are not allowed to see this note (IP restricted)")
+		write_error(w, "Your IP is not allowed to view this note")
 		return
 	}
 
@@ -198,9 +198,13 @@ func parse_post_form(r *http.Request) (PostRequest, error) {
 		return pr, fmt.Errorf("Invalid number of days")
 	}
 
-	limit_clicks, ok := r.Form["limit_clicks"]
+	limit_clicks_s, ok := r.Form["limit_clicks"]
 	if !ok {
 		return pr, fmt.Errorf("Missing whether or not to limit clicks in request")
+	}
+	limit_clicks, err := strconv.ParseBool(limit_clicks_s[0])
+	if err != nil {
+		return pr, fmt.Errorf("Invalid value for limit clicks")
 	}
 
 	max_clicks_s, ok := r.Form["max_clicks"]
@@ -232,7 +236,7 @@ func parse_post_form(r *http.Request) (PostRequest, error) {
 		salt:              salt[0],
 		allowed_ips:       allowed_ips[0],
 		days_until_expire: ndays,
-		limit_clicks:      strings.ToLower(limit_clicks[0]) == "true",
+		limit_clicks:      limit_clicks,
 		max_clicks:        max_clicks,
 		num_links:         num_links,
 		iv:                iv[0],

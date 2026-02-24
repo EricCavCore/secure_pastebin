@@ -23,13 +23,18 @@ type Note struct {
 	CountedClicks  int    `json:"counted_clicks" redis:"counted_clicks"`
 }
 
+func make_ctx() context.Context {
+	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
+	return ctx
+}
+
 func (n *Note) SaveNote(id string, expiry time.Duration) error {
-	err := rc.HSet(context.Background(), id, n).Err()
+	err := rc.HSet(make_ctx(), id, n).Err()
 	if err != nil {
 		return err
 	}
 
-	err = rc.Expire(context.Background(), id, expiry).Err()
+	err = rc.Expire(make_ctx(), id, expiry).Err()
 	if err != nil {
 		return err
 	}
@@ -40,7 +45,8 @@ func (n *Note) SaveNote(id string, expiry time.Duration) error {
 func GetNote(id string) (Note, error) {
 	note_obj := Note{}
 
-	output := rc.HGetAll(context.Background(), id)
+	output := rc.HGetAll(make_ctx(), id)
+	log.Printf("%#v\n", output)
 
 	err := output.Err()
 	if err != nil {
@@ -75,16 +81,22 @@ func (n *Note) CheckAllowedIP(source_ip string) (bool, error) {
 }
 
 func (n *Note) CountClicks(id string) error {
-	n.CountedClicks++
+	result := rc.HIncrBy(make_ctx(), id, "counted_clicks", 1)
+	if result.Err() != nil {
+		return result.Err()
+	}
 
-	var err error
+	n.CountedClicks = int(result.Val())
+
 	if n.CountedClicks == n.MaxClicks {
-		err = rc.Del(context.Background(), id).Err()
+		err := rc.Del(make_ctx(), id).Err()
+		if err != nil {
+			return err
+		}
 		log.Printf("Note %s has exceeded max clicks, removing", id)
 	} else {
-		err = rc.HSet(context.Background(), id, n).Err()
 		log.Printf("Note %s is now at %d/%d clicks", id, n.CountedClicks, n.MaxClicks)
 	}
 
-	return err
+	return nil
 }
