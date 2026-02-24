@@ -26,6 +26,7 @@ type Resp struct {
 
 type PostRequest struct {
 	content           string
+	iv                string
 	allowed_ips       string
 	days_until_expire int
 	limit_clicks      bool
@@ -118,7 +119,7 @@ func web_post_note(w http.ResponseWriter, r *http.Request) {
 	id_list := []string{}
 
 	for i := 0; i < pr.num_links; i++ {
-		note := NewNote(pr.content, pr.allowed_ips, pr.limit_clicks, pr.max_clicks)
+		note := NewNote(pr.content, pr.iv, pr.allowed_ips, pr.limit_clicks, pr.max_clicks)
 		id := uuid.NewString()
 		err = note.SaveNote(id, time.Duration(pr.days_until_expire)*24*time.Hour)
 		if err != nil {
@@ -150,6 +151,14 @@ func parse_post_form(r *http.Request) (PostRequest, error) {
 
 	if len(content[0]) == 0 {
 		return pr, fmt.Errorf("Note content cannot be empty")
+	}
+
+	iv, ok := r.Form["iv"]
+	if !ok {
+		return pr, fmt.Errorf("Missing content in request")
+	}
+	if len(iv[0]) != 16 {
+		return pr, fmt.Errorf("Invalid IV length")
 	}
 
 	allowed_ips, ok := r.Form["allowed_ips"]
@@ -202,6 +211,7 @@ func parse_post_form(r *http.Request) (PostRequest, error) {
 		limit_clicks:      limit_clicks[0] == "true",
 		max_clicks:        max_clicks,
 		num_links:         num_links,
+		iv:                iv[0],
 	}, nil
 }
 

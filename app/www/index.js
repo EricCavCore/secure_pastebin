@@ -3,60 +3,42 @@
  *  Purpose  : Front end logic including UI, AJAX calls to backend, and encrypting / descrypting notes
  *             Encryption / Decryption is handled here to provide a true end-to-end encryption schema
  *  Authors  : Eric Caverly
- *           : Shubham Khan (enc_message, dec_message)
  */
 
 
-// Effectively ripped from https://dev.to/shubhamkhan/beginners-guide-to-aes-encryption-and-decryption-in-javascript-using-cryptojs-592
-function enc_message(message, psk) {
-    let key = CryptoJS.SHA256(psk).toString();
+async function enc_message(message, psk) {
 
-    // Generate a random Initialization Vector (IV) for security
-    const iv = CryptoJS.lib.WordArray.random(16);
+    let msg = new TextEncoder().encode(message);
+    let passphrase = new TextEncoder().encode(psk);
 
-    // Encrypt the text using AES with CBC mode and the secret key
-    const encrypted = CryptoJS.AES.encrypt(message, CryptoJS.enc.Hex.parse(key), {
-        iv: iv,
-        padding: CryptoJS.pad.Pkcs7,
-        mode: CryptoJS.mode.CBC,
-    });
+    let iv = window.crypto.getRandomValues(new Uint8Array(12));
+    let alg = { name: "AES-GCM", iv };
 
-    // Concatenate IV and ciphertext and encode in Base64 format
-    const encryptedBase64 = CryptoJS.enc.Base64.stringify(
-        iv.concat(encrypted.ciphertext)
-    );
+    let hash = await window.crypto.subtle.digest("SHA-256", passphrase);
+    let key = await window.crypto.subtle.importKey('raw', hash, {name:"AES-GCM"}, false, ['encrypt']);
+    let ctBuffer = await window.crypto.subtle.encrypt(alg, key, msg);
 
-    return encryptedBase64;
+    return {
+        cipher_text: btoa(String.fromCharCode(...new Uint8Array(ctBuffer))),
+        iv: btoa(String.fromCharCode(...new Uint8Array(iv)))
+    };
 }
 
 
-// Effectively ripped from https://dev.to/shubhamkhan/beginners-guide-to-aes-encryption-and-decryption-in-javascript-using-cryptojs-592
-function dec_message(encText, psk) {
-    let key = CryptoJS.SHA256(psk).toString();
-
+async function dec_message(enc_text, iv, psk) {
     try {
-        const fullCipher = CryptoJS.enc.Base64.parse(encText);
+        const iv_bs = Uint8Array.from(atob(iv), c => c.charCodeAt(0));
+        const ciphertext = Uint8Array.from(atob(enc_text), c => c.charCodeAt(0));
 
-        // Extract IV and ciphertext from the parsed cipher
-        const iv = CryptoJS.lib.WordArray.create(fullCipher.words.slice(0, 4), 16);
-        const ciphertext = CryptoJS.lib.WordArray.create(fullCipher.words.slice(4));
+        let passphrase = new TextEncoder().encode(psk);
+        let hash = await window.crypto.subtle.digest("SHA-256", passphrase);
+        let key = await window.crypto.subtle.importKey('raw', hash, { name: "AES-GCM" }, false, ['decrypt']);
 
-        const cipherParams = CryptoJS.lib.CipherParams.create({
-            ciphertext: ciphertext,
-        });
+        let alg = { name: "AES-GCM", iv: iv_bs};
+        let ptBuffer = await window.crypto.subtle.decrypt(alg, key, ciphertext);
 
-        // Decrypt the ciphertext using AES and the provided secret key
-        const decrypted = CryptoJS.AES.decrypt(cipherParams, CryptoJS.enc.Hex.parse(key), {
-            iv: iv,
-            padding: CryptoJS.pad.Pkcs7,
-            mode: CryptoJS.mode.CBC,
-        });
-
-        // Return decrypted text in UTF-8 format
-        return decrypted.toString(CryptoJS.enc.Utf8);
-
+        return new TextDecoder().decode(ptBuffer);
     } catch (error) {
-        console.error("decryption error:", error);
         return null;
     }
 }
@@ -112,7 +94,7 @@ function setup_note_creation() {
         passwd_field.val(passphrase_words.join("-"));
     });
 
-    form.submit((e) => {
+    form.submit(async (e) => {
         e.preventDefault();
 
         let msg = $("#new_content").val();
@@ -123,19 +105,23 @@ function setup_note_creation() {
         let num_links_i = $("#new_num_links").val();
         let exp = new_expiry.val();
 
-        let ciphertext = enc_message(msg, psk);
+        let enc_msg = await enc_message(msg, psk);
 
         create_note.hide();
         loading.show();
 
-        api_req("POST", "note", {
-            "content": ciphertext,
+        let api_data = {
+            "content": enc_msg.cipher_text,
+            "iv": enc_msg.iv,
             "allowed_ips": ipr,
             "days_until_expire": exp,
             "limit_clicks": limit_click_b,
             "max_clicks": max_click_i,
             "num_links": num_links_i,
-        }, (result) => {
+        };
+        console.log(api_data);
+
+        api_req("POST", "note", api_data, (result) => {
             loading.hide();
             result_card.show();
 
@@ -149,7 +135,7 @@ function setup_note_creation() {
                 result.data.forEach(id => {
                     const url = `${window.location.href}?uuid=${id}`;
                     const btn = document.createElement("button");
-                    btn.setAttribute("class", "btn btn-primary");
+                    btn.setAttribute("class", "btn btn-success");
                     btn.innerHTML = `&#x1F4CB;`;
                     btn.addEventListener("click", () => {
                         navigator.clipboard.writeText(url);
@@ -188,25 +174,18 @@ function setup_note_retrieval(uuid) {
     api_req("GET", `note/${uuid}`, {}, (result) => {
         console.log(result)
         if (result.success) {
-            $("#decrypt_form").submit((e) => {
+            $("#decrypt_form").submit(async (e) => {
                 e.preventDefault();
                 loading.show();
 
                 let psk = $("#view_passphrase").val().trim();
-                let msg = dec_message(result.data.content, psk);
+                let msg = await dec_message(result.data.content, result.data.iv, psk);
 
                 result_body.empty();
 
                 if (msg == "" || msg == null) {
                     result_body.html(`&#x274c; Invalid passphrase`);
                 } else {
-                    /*
-                    <div class="form-floating">
-                        <textarea class="form-control" placeholder="Leave a comment here" id="new_content" style="height: 200px;" required></textarea>
-                        <label for="new_content">Note Content</label>
-                    </div>
-                    */
-
                     const floating_div = document.createElement("div");
                     floating_div.classList = "form-floating";
 
@@ -222,14 +201,6 @@ function setup_note_retrieval(uuid) {
                     floating_div.appendChild(text_area);
                     floating_div.appendChild(lbl);
                     result_body.append(floating_div);
-
-
-                    // result_body.html("<h5>Note Content:</h5>")
-                    // const code = document.createElement("code")
-                    // const pre = document.createElement("pre")
-                    // pre.appendChild(document.createTextNode(msg));
-                    // code.appendChild(pre);
-                    // result_body.append(code);
                 }
 
                 loading.hide();
