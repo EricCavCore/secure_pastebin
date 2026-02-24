@@ -79,7 +79,7 @@ func (n *Note) CountClicks(id string) error {
 
 	var err error
 	if n.CountedClicks == n.MaxClicks {
-		err = rc.HDel(context.Background(), id, "content", "allowed_ips", "limit_clicks", "max_clicks", "counted_clicks").Err()
+		err = rc.Del(context.Background(), id).Err()
 		log.Printf("Note %s has exceeded max clicks, removing", id)
 	} else {
 		err = rc.HSet(context.Background(), id, n).Err()

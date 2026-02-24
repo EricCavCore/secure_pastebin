@@ -72,14 +72,13 @@ func write_success(w http.ResponseWriter, msg string, data any) {
 
 func web_get_note(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	log.Printf("get_note called from %s on uuid:%s\n", r.RemoteAddr, id)
 
 	// If using a reverse proxy, which is assumed... Otherwise use r.RemoteAddr
 	remote_addr := r.Header.Get("X-Real-Ip")
 	if len(remote_addr) < 8 {
 		remote_addr = strings.Split(r.RemoteAddr, ":")[0]
 	}
-	log.Printf("IP from Traefik: %s\n", remote_addr)
+	log.Printf("get_note from %s\n", remote_addr)
 
 	n, err := GetNote(id)
 	if err != nil {
@@ -87,15 +86,15 @@ func web_get_note(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// allowed, err := n.CheckAllowedIP(remote_addr)
-	// if err != nil {
-	// 	write_error(w, "Failed to verify if your IP is allowed")
-	// 	return
-	// }
-	// if !allowed {
-	// 	write_error(w, "You are not allowed to see this note (IP restricted)")
-	// 	return
-	// }
+	allowed, err := n.CheckAllowedIP(remote_addr)
+	if err != nil {
+		write_error(w, "Failed to verify if your IP is allowed")
+		return
+	}
+	if !allowed {
+		write_error(w, "You are not allowed to see this note (IP restricted)")
+		return
+	}
 
 	if n.LimitClicks {
 		err = n.CountClicks(id)
@@ -111,6 +110,7 @@ func web_get_note(w http.ResponseWriter, r *http.Request) {
 func web_post_note(w http.ResponseWriter, r *http.Request) {
 	log.Printf("post_note called from %s\n", r.RemoteAddr)
 
+	r.Body = http.MaxBytesReader(w, r.Body, max_note_size_bytes)
 	pr, err := parse_post_form(r)
 	if err != nil {
 		write_error(w, err.Error())
@@ -142,6 +142,7 @@ func web_post_note(w http.ResponseWriter, r *http.Request) {
 }
 
 func parse_post_form(r *http.Request) (PostRequest, error) {
+
 	pr := PostRequest{}
 
 	err := r.ParseForm()
@@ -203,13 +204,15 @@ func parse_post_form(r *http.Request) (PostRequest, error) {
 	}
 
 	max_clicks_s, ok := r.Form["max_clicks"]
-	if !ok && (limit_clicks[0] == "true") {
+	if !ok {
 		return pr, fmt.Errorf("Missing max clicks in request")
 	}
-
 	max_clicks, err := strconv.Atoi(max_clicks_s[0])
 	if err != nil {
 		return pr, fmt.Errorf("Invalid max clicks value, must be int")
+	}
+	if max_clicks < 0 || max_clicks > max_max_clicks {
+		return pr, fmt.Errorf("Invalid max click count, must be between 0 and %d", max_max_clicks)
 	}
 
 	num_links_s, ok := r.Form["num_links"]
@@ -220,13 +223,16 @@ func parse_post_form(r *http.Request) (PostRequest, error) {
 	if err != nil {
 		return pr, fmt.Errorf("Invalid num links, must be int")
 	}
+	if num_links < 0 || num_links > max_num_links {
+		return pr, fmt.Errorf("Invalid number of links! Max %d", max_num_links)
+	}
 
 	return PostRequest{
 		content:           content[0],
 		salt:              salt[0],
 		allowed_ips:       allowed_ips[0],
 		days_until_expire: ndays,
-		limit_clicks:      limit_clicks[0] == "true",
+		limit_clicks:      strings.ToLower(limit_clicks[0]) == "true",
 		max_clicks:        max_clicks,
 		num_links:         num_links,
 		iv:                iv[0],

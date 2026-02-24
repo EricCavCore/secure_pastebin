@@ -3,7 +3,9 @@ services:
     image: redis:alpine3.21
     hostname: db.spb.arpa
     ports:
-    - 6379:6379
+      - 6379:6379
+    command: >
+      redis-server --requirepass supersecretpassword
     healthcheck:
       test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
       interval: 1m30s

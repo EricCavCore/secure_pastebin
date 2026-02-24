@@ -190,7 +190,7 @@ function setup_note_creation() {
                     id_sh.style = "font-size: 11px;"
                     id_sh.appendChild(document.createTextNode(id));
 
-                    result_body.text(` Note available`);
+                    result_body.text(` Note available `);
                     const link = document.createElement("a");
                     link.href = url;
                     link.appendChild(document.createTextNode("here"));

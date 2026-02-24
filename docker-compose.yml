@@ -6,6 +6,8 @@ services:
       - external_services
     # ports:
     #   - 8080:8080
+    environment:
+      - REDIS_PASSWORD=supersecretvalue
     deploy:
       mode: replicated
       replicas: 2
@@ -31,6 +33,8 @@ services:
     hostname: db.spb.arpa
     networks:
       - spb_net
+    command: >
+      redis-server --requirepass supersecretvalue
     healthcheck:
       test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
       interval: 1m30s
