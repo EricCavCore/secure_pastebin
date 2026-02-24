@@ -9,6 +9,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -36,9 +37,17 @@ func main() {
 	r.HandleFunc("POST /api/note", web_post_note)
 	r.HandleFunc("GET /api/health", web_health_check)
 
-	addr := ":8080"
-	log.Printf("Started listening on %s\n", addr)
-	if err := http.ListenAndServe(addr, r); err != nil {
+	srv := &http.Server{
+		Addr:         ":8080",
+		Handler:      r,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+
+	log.Printf("Started listening on %s\n", srv.Addr)
+
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("Web server crashed: %s\n", err.Error())
 	}
 }
