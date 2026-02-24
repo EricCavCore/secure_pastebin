@@ -1,6 +1,6 @@
-FROM golang:1.24.5
+FROM golang:1.26.0
 
-LABEL org.opencontainers.image.authors="eric@ericc.ninja"
+LABEL org.opencontainers.image.authors="ecaverly@corenetwork.ca"
 
 WORKDIR /app
 
