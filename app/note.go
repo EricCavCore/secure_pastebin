@@ -16,21 +16,11 @@ import (
 type Note struct {
 	Content        string `json:"content" redis:"content"`
 	IV             string `json:"iv" redis:"iv"`
+	Salt           string `json:"salt" redis:"salt"`
 	AllowedIPRange string `json:"allowed_ips" redis:"allowed_ips"`
 	LimitClicks    bool   `json:"limit_clicks" redis:"limit_clicks"`
 	MaxClicks      int    `json:"max_clicks" redis:"max_clicks"`
 	CountedClicks  int    `json:"counted_clicks" redis:"counted_clicks"`
-}
-
-func NewNote(content string, iv string, allowed_ips string, limit_clicks bool, max_clicks int) Note {
-	return Note{
-		Content:        content,
-		IV:             iv,
-		AllowedIPRange: allowed_ips,
-		LimitClicks:    limit_clicks,
-		MaxClicks:      max_clicks,
-		CountedClicks:  0,
-	}
 }
 
 func (n *Note) SaveNote(id string, expiry time.Duration) error {

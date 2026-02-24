@@ -6,39 +6,89 @@
  */
 
 
+// Generate random salt (16 bytes recommended)
+function generateSalt() {
+    return window.crypto.getRandomValues(new Uint8Array(16));
+}
+
+
+// Derive AES key from passphrase + salt using PBKDF2
+async function deriveKey(passphrase, salt, iterations = 300000) {
+    const enc = new TextEncoder();
+    const passKey = await window.crypto.subtle.importKey(
+        'raw',
+        enc.encode(passphrase),
+        { name: 'PBKDF2' },
+        false,
+        ['deriveKey']
+    );
+
+    return await window.crypto.subtle.deriveKey(
+        {
+            name: 'PBKDF2',
+            salt: salt,
+            iterations: iterations,
+            hash: 'SHA-256'
+        },
+        passKey,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt']
+    );
+}
+
+
+function uint8ToBase64(uint8Array) {
+    let binary = '';
+    const bytes = new Uint8Array(uint8Array);
+    for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+}
+
+
+function base64ToUint8(base64String) {
+    const binary = atob(base64String);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+}
+
+
 async function enc_message(message, psk) {
+    const msg = new TextEncoder().encode(message);
+    const salt = generateSalt()
 
-    let msg = new TextEncoder().encode(message);
-    let passphrase = new TextEncoder().encode(psk);
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
 
-    let iv = window.crypto.getRandomValues(new Uint8Array(12));
-    let alg = { name: "AES-GCM", iv };
+    const key = await deriveKey(psk, salt);
 
-    let hash = await window.crypto.subtle.digest("SHA-256", passphrase);
-    let key = await window.crypto.subtle.importKey('raw', hash, {name:"AES-GCM"}, false, ['encrypt']);
-    let ctBuffer = await window.crypto.subtle.encrypt(alg, key, msg);
+    const ctBuffer = await window.crypto.subtle.encrypt({name: "AES-GCM", iv}, key, msg);
 
     return {
-        cipher_text: btoa(String.fromCharCode(...new Uint8Array(ctBuffer))),
-        iv: btoa(String.fromCharCode(...new Uint8Array(iv)))
+        cipher_text: uint8ToBase64(ctBuffer),
+        salt: uint8ToBase64(salt),
+        iv: uint8ToBase64(iv)
     };
 }
 
 
-async function dec_message(enc_text, iv, psk) {
+async function dec_message(enc_text, enc_iv, enc_salt, psk) {
     try {
-        const iv_bs = Uint8Array.from(atob(iv), c => c.charCodeAt(0));
-        const ciphertext = Uint8Array.from(atob(enc_text), c => c.charCodeAt(0));
+        const iv = base64ToUint8(enc_iv);
+        const salt = base64ToUint8(enc_salt);
+        const ciphertext = base64ToUint8(enc_text);
 
-        let passphrase = new TextEncoder().encode(psk);
-        let hash = await window.crypto.subtle.digest("SHA-256", passphrase);
-        let key = await window.crypto.subtle.importKey('raw', hash, { name: "AES-GCM" }, false, ['decrypt']);
+        const key = await deriveKey(psk, salt);
 
-        let alg = { name: "AES-GCM", iv: iv_bs};
-        let ptBuffer = await window.crypto.subtle.decrypt(alg, key, ciphertext);
+        let ptBuffer = await window.crypto.subtle.decrypt({ name: "AES-GCM", iv: iv}, key, ciphertext);
 
         return new TextDecoder().decode(ptBuffer);
     } catch (error) {
+        console.log("Decryption failure: ", error);
         return null;
     }
 }
@@ -113,13 +163,13 @@ function setup_note_creation() {
         let api_data = {
             "content": enc_msg.cipher_text,
             "iv": enc_msg.iv,
+            "salt": enc_msg.salt,
             "allowed_ips": ipr,
             "days_until_expire": exp,
             "limit_clicks": limit_click_b,
             "max_clicks": max_click_i,
             "num_links": num_links_i,
         };
-        console.log(api_data);
 
         api_req("POST", "note", api_data, (result) => {
             loading.hide();
@@ -127,10 +177,6 @@ function setup_note_creation() {
 
             if (result.success) {
                 result_body.empty();
-
-                const password_display = document.createElement("h6");
-                password_display.appendChild(document.createTextNode(`Password: "${psk}"`));
-                result_body.append(password_display);
 
                 result.data.forEach(id => {
                     const url = `${window.location.href}?uuid=${id}`;
@@ -144,7 +190,12 @@ function setup_note_creation() {
                     id_sh.style = "font-size: 11px;"
                     id_sh.appendChild(document.createTextNode(id));
 
-                    result_body.append(`&#x2713; Note available <a href="${url}">here</a> `);
+                    result_body.text(` Note available`);
+                    const link = document.createElement("a");
+                    link.href = url;
+                    link.appendChild(document.createTextNode("here"));
+                    result_body.append(link);
+
                     result_body.append(btn);
                     result_body.append(id_sh)
                     result_body.append(document.createElement("hr"));
@@ -152,7 +203,7 @@ function setup_note_creation() {
 
             } else {
                 create_note.show();
-                result_body.html(`&#x274c; Error: ${result.message}`);
+                result_body.text(`❌ Error: ${result.message}`);
             }
         });
     })
@@ -172,19 +223,18 @@ function setup_note_retrieval(uuid) {
 
     // Obtain the note, rendering a field for the passphrase if the note eixsts, or an error
     api_req("GET", `note/${uuid}`, {}, (result) => {
-        console.log(result)
         if (result.success) {
             $("#decrypt_form").submit(async (e) => {
                 e.preventDefault();
                 loading.show();
 
                 let psk = $("#view_passphrase").val().trim();
-                let msg = await dec_message(result.data.content, result.data.iv, psk);
+                let msg = await dec_message(result.data.content, result.data.iv, result.data.salt, psk);
 
                 result_body.empty();
 
                 if (msg == "" || msg == null) {
-                    result_body.html(`&#x274c; Invalid passphrase`);
+                    result_body.text(`❌ Invalid passphrase`);
                 } else {
                     const floating_div = document.createElement("div");
                     floating_div.classList = "form-floating";
@@ -214,7 +264,7 @@ function setup_note_retrieval(uuid) {
             loading.hide();
             result_back.show();
             result_card.show();
-            result_body.html(`&#x274c; Error: ${result.message}`);
+            result_body.text(`❌ Error: ${result.message}`);
         }
     });
 }

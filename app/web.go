@@ -27,6 +27,7 @@ type Resp struct {
 type PostRequest struct {
 	content           string
 	iv                string
+	salt              string
 	allowed_ips       string
 	days_until_expire int
 	limit_clicks      bool
@@ -86,15 +87,15 @@ func web_get_note(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	allowed, err := n.CheckAllowedIP(remote_addr)
-	if err != nil {
-		write_error(w, "Failed to verify if your IP is allowed")
-		return
-	}
-	if !allowed {
-		write_error(w, "You are not allowed to see this note (IP restricted)")
-		return
-	}
+	// allowed, err := n.CheckAllowedIP(remote_addr)
+	// if err != nil {
+	// 	write_error(w, "Failed to verify if your IP is allowed")
+	// 	return
+	// }
+	// if !allowed {
+	// 	write_error(w, "You are not allowed to see this note (IP restricted)")
+	// 	return
+	// }
 
 	if n.LimitClicks {
 		err = n.CountClicks(id)
@@ -119,7 +120,15 @@ func web_post_note(w http.ResponseWriter, r *http.Request) {
 	id_list := []string{}
 
 	for i := 0; i < pr.num_links; i++ {
-		note := NewNote(pr.content, pr.iv, pr.allowed_ips, pr.limit_clicks, pr.max_clicks)
+		note := Note{
+			Content:        pr.content,
+			IV:             pr.iv,
+			Salt:           pr.salt,
+			AllowedIPRange: pr.allowed_ips,
+			LimitClicks:    pr.limit_clicks,
+			MaxClicks:      pr.max_clicks,
+			CountedClicks:  0,
+		}
 		id := uuid.NewString()
 		err = note.SaveNote(id, time.Duration(pr.days_until_expire)*24*time.Hour)
 		if err != nil {
@@ -159,6 +168,14 @@ func parse_post_form(r *http.Request) (PostRequest, error) {
 	}
 	if len(iv[0]) != 16 {
 		return pr, fmt.Errorf("Invalid IV length")
+	}
+
+	salt, ok := r.Form["salt"]
+	if !ok {
+		return pr, fmt.Errorf("Missing content in request")
+	}
+	if len(salt[0]) != 24 {
+		return pr, fmt.Errorf("Invalid salt length")
 	}
 
 	allowed_ips, ok := r.Form["allowed_ips"]
@@ -206,6 +223,7 @@ func parse_post_form(r *http.Request) (PostRequest, error) {
 
 	return PostRequest{
 		content:           content[0],
+		salt:              salt[0],
 		allowed_ips:       allowed_ips[0],
 		days_until_expire: ndays,
 		limit_clicks:      limit_clicks[0] == "true",
