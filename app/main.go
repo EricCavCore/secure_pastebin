@@ -28,10 +28,12 @@ var (
 
 func main() {
 	redis_pass := os.Getenv("REDIS_PASSWORD")
+	redis_addr := os.Getenv("REDIS_ADDR")
 
 	rc = redis.NewClient(&redis.Options{
-		// Addr:     "db.spb.arpa:6379",
-		Addr:     "localhost:6379",
+		// Addr: "db.spb.arpa:6379",
+		// Addr:     "localhost:6379",
+		Addr:     redis_addr,
 		Password: redis_pass,
 		DB:       0,
 		Protocol: 3,
