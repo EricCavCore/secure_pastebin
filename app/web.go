@@ -7,6 +7,8 @@
 package main
 
 import (
+	"crypto/hmac"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -33,11 +35,13 @@ type PostRequest struct {
 	limit_clicks      bool
 	max_clicks        int
 	num_links         int
+	verify_hash       string
+	verify_salt       string
 }
 
-func write_error(w http.ResponseWriter, msg string) {
+func write_error(w http.ResponseWriter, msg string, status int) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(status)
 
 	bdy := Resp{
 		Success: false,
@@ -62,7 +66,7 @@ func write_success(w http.ResponseWriter, msg string, data any) {
 
 	d_buff, err := json.Marshal(bdy)
 	if err != nil {
-		write_error(w, "Failed to marshal data")
+		write_error(w, "Failed to marshal data", http.StatusInternalServerError)
 		log.Printf("Failed to format a success body: %s\n", err.Error())
 		return
 	}
@@ -70,36 +74,105 @@ func write_success(w http.ResponseWriter, msg string, data any) {
 	w.Write(d_buff)
 }
 
+// getClientIP extracts the real client IP, only trusting proxy headers from
+// configured trusted proxy ranges. Handles both IPv4 and IPv6 RemoteAddr formats.
+func getClientIP(r *http.Request) string {
+	remoteIP := r.RemoteAddr
+	if idx := strings.LastIndex(remoteIP, ":"); idx != -1 {
+		remoteIP = remoteIP[:idx]
+	}
+	remoteIP = strings.Trim(remoteIP, "[]")
+
+	if len(trustedProxies) > 0 {
+		isTrusted, _ := within_ranges(remoteIP, strings.Join(trustedProxies, ","))
+		if isTrusted {
+			if realIP := r.Header.Get("X-Real-Ip"); realIP != "" {
+				return realIP
+			}
+			if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+				parts := strings.Split(fwd, ",")
+				return strings.TrimSpace(parts[0])
+			}
+		}
+	}
+
+	return remoteIP
+}
+
+// web_get_note is a lightweight existence check. It does NOT return ciphertext
+// and does NOT increment click counts. Returns metadata needed for the frontend
+// to render the passphrase prompt.
 func web_get_note(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	// If using a reverse proxy, which is assumed... Otherwise use r.RemoteAddr
-	remote_addr := r.Header.Get("X-Real-Ip")
-	if len(remote_addr) < 8 {
-		remote_addr = strings.Split(r.RemoteAddr, ":")[0]
+	exists, vhash, vsalt, err := NoteExists(id)
+	if err != nil || !exists {
+		write_error(w, "Note not found", http.StatusNotFound)
+		return
 	}
-	log.Printf("get_note from %s\n", remote_addr)
 
-	n, err := GetNote(id)
+	type NoteStatus struct {
+		Exists         bool   `json:"exists"`
+		RequiresVerify bool   `json:"requires_verify"`
+		VerifySalt     string `json:"verify_salt,omitempty"`
+	}
+
+	write_success(w, "Note exists", NoteStatus{
+		Exists:         true,
+		RequiresVerify: vhash != "",
+		VerifySalt:     vsalt,
+	})
+}
+
+// web_verify_note handles passphrase verification and returns the note content.
+// Uses atomic Lua script to prevent race conditions in click counting.
+func web_verify_note(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	remote_addr := getClientIP(r)
+	log.Printf("verify_note from %s\n", remote_addr)
+
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if err := r.ParseForm(); err != nil {
+		write_error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	clientHash := r.FormValue("verify_hash")
+	if clientHash == "" {
+		write_error(w, "Missing verification hash", http.StatusBadRequest)
+		return
+	}
+
+	n, err := GetNoteAtomic(id)
 	if err != nil {
-		write_error(w, err.Error())
+		write_error(w, "Note not found", http.StatusNotFound)
 		return
 	}
 
 	allowed, err := n.CheckAllowedIP(remote_addr)
 	if err != nil {
-		write_error(w, "Failed to verify if your IP is allowed")
+		write_error(w, "Failed to verify if your IP is allowed", http.StatusInternalServerError)
 		return
 	}
 	if !allowed {
-		write_error(w, "Your IP is not allowed to view this note")
+		write_error(w, "Your IP is not allowed to view this note", http.StatusForbidden)
 		return
 	}
 
-	if n.LimitClicks {
-		err = n.CountClicks(id)
+	if n.VerifyHash != "" {
+		clientHashBytes, err := base64.StdEncoding.DecodeString(clientHash)
 		if err != nil {
-			write_error(w, err.Error())
+			write_error(w, "Invalid verification hash format", http.StatusBadRequest)
+			return
+		}
+		storedHashBytes, err := base64.StdEncoding.DecodeString(n.VerifyHash)
+		if err != nil {
+			write_error(w, "Internal error", http.StatusInternalServerError)
+			return
+		}
+		if !hmac.Equal(clientHashBytes, storedHashBytes) {
+			write_error(w, "Invalid passphrase", http.StatusForbidden)
 			return
 		}
 	}
@@ -113,7 +186,7 @@ func web_post_note(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, max_note_size_bytes)
 	pr, err := parse_post_form(r)
 	if err != nil {
-		write_error(w, err.Error())
+		write_error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -128,11 +201,13 @@ func web_post_note(w http.ResponseWriter, r *http.Request) {
 			LimitClicks:    pr.limit_clicks,
 			MaxClicks:      pr.max_clicks,
 			CountedClicks:  0,
+			VerifyHash:     pr.verify_hash,
+			VerifySalt:     pr.verify_salt,
 		}
 		id := uuid.NewString()
 		err = note.SaveNote(id, time.Duration(pr.days_until_expire)*24*time.Hour)
 		if err != nil {
-			write_error(w, err.Error())
+			write_error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		id_list = append(id_list, id)
@@ -165,7 +240,7 @@ func parse_post_form(r *http.Request) (PostRequest, error) {
 
 	iv, ok := r.Form["iv"]
 	if !ok {
-		return pr, fmt.Errorf("Missing content in request")
+		return pr, fmt.Errorf("Missing IV in request")
 	}
 	if len(iv[0]) != 16 {
 		return pr, fmt.Errorf("Invalid IV length")
@@ -173,7 +248,7 @@ func parse_post_form(r *http.Request) (PostRequest, error) {
 
 	salt, ok := r.Form["salt"]
 	if !ok {
-		return pr, fmt.Errorf("Missing content in request")
+		return pr, fmt.Errorf("Missing salt in request")
 	}
 	if len(salt[0]) != 24 {
 		return pr, fmt.Errorf("Invalid salt length")
@@ -194,8 +269,8 @@ func parse_post_form(r *http.Request) (PostRequest, error) {
 	}
 
 	ndays, err := strconv.Atoi(dte[0])
-	if err != nil || ndays < 0 || ndays > max_days {
-		return pr, fmt.Errorf("Invalid number of days")
+	if err != nil || ndays < 1 || ndays > max_days {
+		return pr, fmt.Errorf("Invalid number of days (must be between 1 and %d)", max_days)
 	}
 
 	limit_clicks_s, ok := r.Form["limit_clicks"]
@@ -215,8 +290,8 @@ func parse_post_form(r *http.Request) (PostRequest, error) {
 	if err != nil {
 		return pr, fmt.Errorf("Invalid max clicks value, must be int")
 	}
-	if max_clicks < 0 || max_clicks > max_max_clicks {
-		return pr, fmt.Errorf("Invalid max click count, must be between 0 and %d", max_max_clicks)
+	if max_clicks < 1 || max_clicks > max_max_clicks {
+		return pr, fmt.Errorf("Invalid max click count, must be between 1 and %d", max_max_clicks)
 	}
 
 	num_links_s, ok := r.Form["num_links"]
@@ -227,8 +302,18 @@ func parse_post_form(r *http.Request) (PostRequest, error) {
 	if err != nil {
 		return pr, fmt.Errorf("Invalid num links, must be int")
 	}
-	if num_links < 0 || num_links > max_num_links {
-		return pr, fmt.Errorf("Invalid number of links! Max %d", max_num_links)
+	if num_links < 1 || num_links > max_num_links {
+		return pr, fmt.Errorf("Invalid number of links! Must be between 1 and %d", max_num_links)
+	}
+
+	verify_hash_v, ok := r.Form["verify_hash"]
+	if !ok || len(verify_hash_v[0]) == 0 {
+		return pr, fmt.Errorf("Missing verification hash")
+	}
+
+	verify_salt_v, ok := r.Form["verify_salt"]
+	if !ok || len(verify_salt_v[0]) == 0 {
+		return pr, fmt.Errorf("Missing verification salt")
 	}
 
 	return PostRequest{
@@ -240,6 +325,8 @@ func parse_post_form(r *http.Request) (PostRequest, error) {
 		max_clicks:        max_clicks,
 		num_links:         num_links,
 		iv:                iv[0],
+		verify_hash:       verify_hash_v[0],
+		verify_salt:       verify_salt_v[0],
 	}, nil
 }
 

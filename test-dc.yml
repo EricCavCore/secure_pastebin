@@ -4,11 +4,13 @@ services:
     hostname: db.spb.arpa
     ports:
       - 6379:6379
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-supersecretpassword}
     command: >
-      redis-server --requirepass supersecretpassword
+      redis-server --requirepass ${REDIS_PASSWORD:-supersecretpassword} --maxmemory 256mb --maxmemory-policy allkeys-lru
     healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
-      interval: 1m30s
-      timeout: 30s
+      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping | grep PONG"]
+      interval: 30s
+      timeout: 10s
       retries: 5
-      start_period: 30s
+      start_period: 10s

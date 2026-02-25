@@ -1,6 +1,6 @@
 /*********************************
  *  File     : index.js
- *  Purpose  : Front end logic including UI, AJAX calls to backend, and encrypting / descrypting notes
+ *  Purpose  : Front end logic including UI, AJAX calls to backend, and encrypting / decrypting notes
  *             Encryption / Decryption is handled here to provide a true end-to-end encryption schema
  *  Authors  : Eric Caverly
  */
@@ -38,6 +38,34 @@ async function deriveKey(passphrase, salt, iterations = 300000) {
 }
 
 
+// Derive a verification hash from passphrase + salt using PBKDF2.
+// This is separate from the encryption key — used for server-side passphrase
+// verification to prevent offline brute-force attacks on the ciphertext.
+async function deriveVerificationHash(passphrase, salt, iterations = 300000) {
+    const enc = new TextEncoder();
+    const passKey = await window.crypto.subtle.importKey(
+        'raw',
+        enc.encode(passphrase),
+        { name: 'PBKDF2' },
+        false,
+        ['deriveBits']
+    );
+
+    const bits = await window.crypto.subtle.deriveBits(
+        {
+            name: 'PBKDF2',
+            salt: salt,
+            iterations: iterations,
+            hash: 'SHA-256'
+        },
+        passKey,
+        256
+    );
+
+    return uint8ToBase64(new Uint8Array(bits));
+}
+
+
 function uint8ToBase64(uint8Array) {
     let binary = '';
     const bytes = new Uint8Array(uint8Array);
@@ -55,6 +83,11 @@ function base64ToUint8(base64String) {
         bytes[i] = binary.charCodeAt(i);
     }
     return bytes;
+}
+
+
+function isValidUUID(str) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 }
 
 
@@ -107,7 +140,16 @@ function api_req(method, endpoint, data, success_func) {
     req_obj.fail((xhr_err, _, err) => {
         console.log(xhr_err);
         console.log(err);
-        alert(`There was a problem making the request`);
+
+        let msg = "There was a problem making the request";
+        try {
+            const resp = JSON.parse(xhr_err.responseText);
+            if (resp && resp.message) {
+                msg = resp.message;
+            }
+        } catch(e) {}
+
+        alert(msg);
     });
 
     req_obj.done(success_func);
@@ -157,6 +199,11 @@ function setup_note_creation() {
 
         let enc_msg = await enc_message(msg, psk);
 
+        // Derive a separate verification hash for server-side passphrase gating
+        let verify_salt = generateSalt();
+        let verify_hash = await deriveVerificationHash(psk, verify_salt);
+        let verify_salt_b64 = uint8ToBase64(verify_salt);
+
         create_note.hide();
         loading.show();
 
@@ -169,6 +216,8 @@ function setup_note_creation() {
             "limit_clicks": limit_click_b,
             "max_clicks": max_click_i,
             "num_links": num_links_i,
+            "verify_hash": verify_hash,
+            "verify_salt": verify_salt_b64,
         };
 
         api_req("POST", "note", api_data, (result) => {
@@ -203,7 +252,7 @@ function setup_note_creation() {
 
             } else {
                 create_note.show();
-                result_body.text(`❌ Error: ${result.message}`);
+                result_body.text(`Error: ${result.message}`);
             }
         });
     })
@@ -221,41 +270,64 @@ function setup_note_retrieval(uuid) {
     const result_body = $("#result_body");
     const result_back = $("#result_back");
 
-    // Obtain the note, rendering a field for the passphrase if the note eixsts, or an error
+    // Step 1: Check if note exists (GET returns metadata only, no ciphertext)
     api_req("GET", `note/${uuid}`, {}, (result) => {
         if (result.success) {
+            const noteStatus = result.data;
+
             $("#decrypt_form").submit(async (e) => {
                 e.preventDefault();
+                dec_card.hide();
                 loading.show();
 
                 let psk = $("#view_passphrase").val().trim();
-                let msg = await dec_message(result.data.content, result.data.iv, result.data.salt, psk);
 
-                result_body.empty();
+                // Derive the verification hash to prove we know the passphrase
+                let verify_salt = base64ToUint8(noteStatus.verify_salt);
+                let verify_hash = await deriveVerificationHash(psk, verify_salt);
 
-                if (msg == "" || msg == null) {
-                    result_body.text(`❌ Invalid passphrase`);
-                } else {
-                    const floating_div = document.createElement("div");
-                    floating_div.classList = "form-floating";
+                // Step 2: POST to verify endpoint — server checks hash before
+                // releasing ciphertext. This prevents offline brute-force.
+                api_req("POST", `note/${uuid}/verify`, {
+                    verify_hash: verify_hash
+                }, async (vresult) => {
+                    result_body.empty();
 
-                    const text_area = document.createElement("textarea");
-                    text_area.classList = "form-control";
-                    text_area.style = "height: 300px";
-                    text_area.readOnly = true;
-                    text_area.value = msg;
+                    if (vresult.success) {
+                        let msg = await dec_message(
+                            vresult.data.content,
+                            vresult.data.iv,
+                            vresult.data.salt,
+                            psk
+                        );
 
-                    const lbl = document.createElement("label");
-                    lbl.appendChild(document.createTextNode("Note Content"))
+                        if (msg == "" || msg == null) {
+                            result_body.text("Invalid passphrase");
+                        } else {
+                            const floating_div = document.createElement("div");
+                            floating_div.classList = "form-floating";
 
-                    floating_div.appendChild(text_area);
-                    floating_div.appendChild(lbl);
-                    result_body.append(floating_div);
-                }
+                            const text_area = document.createElement("textarea");
+                            text_area.classList = "form-control";
+                            text_area.style = "height: 300px";
+                            text_area.readOnly = true;
+                            text_area.value = msg;
 
-                loading.hide();
-                result_back.hide();
-                result_card.show();
+                            const lbl = document.createElement("label");
+                            lbl.appendChild(document.createTextNode("Note Content"))
+
+                            floating_div.appendChild(text_area);
+                            floating_div.appendChild(lbl);
+                            result_body.append(floating_div);
+                        }
+                    } else {
+                        result_body.text(`Error: ${vresult.message}`);
+                    }
+
+                    loading.hide();
+                    result_back.hide();
+                    result_card.show();
+                });
             });
 
             loading.hide();
@@ -264,7 +336,7 @@ function setup_note_retrieval(uuid) {
             loading.hide();
             result_back.show();
             result_card.show();
-            result_body.text(`❌ Error: ${result.message}`);
+            result_body.text(`Error: ${result.message}`);
         }
     });
 }
@@ -280,6 +352,10 @@ $(() => {
     // Render UI accordingly
     if (uuid == null) {
         setup_note_creation();
+    } else if (!isValidUUID(uuid)) {
+        $("#loading_card").hide();
+        $("#result_card").show();
+        $("#result_body").text("Error: Invalid note ID format");
     } else {
         setup_note_retrieval(uuid);
     }

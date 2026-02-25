@@ -1,6 +1,10 @@
-TAG=v1.0.1
+#!/usr/bin/env bash
+set -euo pipefail
 
-docker build -t registry.cnsmanaged.com/cns/spb:$TAG .
-docker push registry.cnsmanaged.com/cns/spb:$TAG
-docker tag registry.cnsmanaged.com/cns/spb:$TAG registry.cnsmanaged.com/cns/spb:latest
-docker push registry.cnsmanaged.com/cns/spb:latest
+TAG="${1:-v1.0.1}"
+IMAGE_NAME="${IMAGE_REGISTRY:-docker.io}/ericcaverly/spb"
+
+docker build -t "${IMAGE_NAME}:${TAG}" .
+docker push "${IMAGE_NAME}:${TAG}"
+docker tag "${IMAGE_NAME}:${TAG}" "${IMAGE_NAME}:latest"
+docker push "${IMAGE_NAME}:latest"
